@@ -1,6 +1,4 @@
-const API_URL = "https://your-backend-url.onrender.com"; // change after deploy
-
-const socket = io(API_URL);
+const socket = io();
 
 let currentUser = null;
 let currentChatUser = null;
@@ -12,7 +10,7 @@ async function handleLogin(e) {
   const identifier = document.getElementById('login-identifier').value;
   const password = document.getElementById('login-password').value;
 
-  const res = await fetch(API_URL + '/login', {
+  const res = await fetch('/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier, password })
@@ -20,47 +18,93 @@ async function handleLogin(e) {
 
   const data = await res.json();
 
-  if (!data.success) return alert(data.error);
+  if (!data.success) return alert('Login failed');
 
   currentUser = data.user;
-  localStorage.setItem("user", JSON.stringify(currentUser));
-
-  socket.emit("join", currentUser.username);
+  socket.emit('join', currentUser.username);
 
   showMainApp();
+  loadUsers();
 }
 
-// ===== USERS =====
+// ===== SIGNUP =====
+async function handleSignup(e) {
+  e.preventDefault();
+
+  const username = document.getElementById('signup-username').value;
+  const email = document.getElementById('signup-email').value;
+  const password = document.getElementById('signup-password').value;
+
+  const res = await fetch('/signup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email, password })
+  });
+
+  const data = await res.json();
+
+  if (!data.success) return alert('Signup failed');
+
+  currentUser = data.user;
+  socket.emit('join', currentUser.username);
+
+  showMainApp();
+  loadUsers();
+}
+
+// ===== LOAD USERS =====
 async function loadUsers() {
-  const res = await fetch(API_URL + '/users');
+  const res = await fetch('/users');
   const users = await res.json();
 
-  const container = document.getElementById('users-list');
-  container.innerHTML = "";
+  const list = document.getElementById('users-list');
+  list.innerHTML = '';
 
   users.forEach(u => {
     if (u.username === currentUser.username) return;
 
-    const div = document.createElement("div");
-    div.innerHTML = `<p onclick="openChat('${u.username}')">${u.username}</p>`;
-    container.appendChild(div);
+    const div = document.createElement('div');
+    div.className = 'user-item';
+    div.innerText = u.username;
+    div.onclick = () => openChat(u);
+
+    list.appendChild(div);
   });
 }
 
 // ===== OPEN CHAT =====
-async function openChat(username) {
-  currentChatUser = username;
+async function openChat(user) {
+  currentChatUser = user;
 
-  const res = await fetch(API_URL + '/data');
-  const data = await res.json();
+  document.getElementById('chat-username').textContent = user.username;
 
-  const key = [currentUser.username, username].sort().join('|');
-  const messages = data.messages[key] || [];
+  const res = await fetch(`/messages/${currentUser.username}/${user.username}`);
+  const messages = await res.json();
 
+  renderMessages(messages);
+}
+
+// ===== RENDER =====
+function renderMessages(messages) {
   const container = document.getElementById('chat-messages');
-  container.innerHTML = "";
+  container.innerHTML = '';
 
-  messages.forEach(m => appendMessage(m));
+  messages.forEach(addMessageToUI);
+}
+
+function addMessageToUI(msg) {
+  const container = document.getElementById('chat-messages');
+
+  const div = document.createElement('div');
+  div.className = 'message';
+
+  if (msg.file) {
+    div.innerHTML = `<a href="${msg.file}" target="_blank">📎 File</a>`;
+  } else {
+    div.innerText = msg.text;
+  }
+
+  container.appendChild(div);
 }
 
 // ===== SEND MESSAGE =====
@@ -68,31 +112,60 @@ function sendMessage() {
   const input = document.getElementById('chat-input');
   const text = input.value;
 
-  socket.emit("send_message", {
+  if (!text) return;
+
+  socket.emit('send_message', {
     from: currentUser.username,
-    to: currentChatUser,
+    to: currentChatUser.username,
     text
   });
 
-  input.value = "";
+  input.value = '';
 }
 
 // ===== RECEIVE =====
-socket.on("receive_message", (msg) => {
-  appendMessage(msg);
+socket.on('receive_message', (msg) => {
+  addMessageToUI(msg);
 });
 
-// ===== APPEND =====
-function appendMessage(msg) {
-  const div = document.createElement("div");
+// ===== FILE SEND =====
+async function sendFile(file) {
+  const form = new FormData();
+  form.append('file', file);
 
-  if (msg.image) {
-    div.innerHTML = `<img src="${msg.image}" width="150">`;
-  } else if (msg.file) {
-    div.innerHTML = `<a href="${msg.file}" target="_blank">Download File</a>`;
-  } else {
-    div.textContent = msg.sender + ": " + msg.text;
-  }
+  const res = await fetch('/upload', {
+    method: 'POST',
+    body: form
+  });
 
-  document.getElementById('chat-messages').appendChild(div);
+  const data = await res.json();
+
+  socket.emit('send_message', {
+    from: currentUser.username,
+    to: currentChatUser.username,
+    file: data.url
+  });
+}
+
+// ===== PROFILE PIC =====
+async function uploadAvatar(file) {
+  const form = new FormData();
+  form.append('avatar', file);
+  form.append('username', currentUser.username);
+
+  const res = await fetch('/upload-avatar', {
+    method: 'POST',
+    body: form
+  });
+
+  const data = await res.json();
+
+  document.getElementById('sidebar-avatar').style.backgroundImage =
+    `url(${data.url})`;
+}
+
+// ===== UI =====
+function showMainApp() {
+  document.getElementById('auth-container').classList.add('hidden');
+  document.getElementById('main-app').classList.remove('hidden');
 }
